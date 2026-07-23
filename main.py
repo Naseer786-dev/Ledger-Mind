@@ -1,77 +1,38 @@
-from fastapi import FastAPI, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import io
 
-app = FastAPI(title="LedgerMind AI Bookkeeper")
+app = FastAPI()
 
-@app.get("/", response_class=HTMLResponse)
-def home():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>LedgerMind AI Bookkeeper</title>
-        <style>
-            body {font-family: Arial; text-align: center; padding: 50px; background: #f0f8ff;}
-            h1 {color: #0066cc;}
-           .card {background: white; padding: 20px; margin: 15px auto; width: 400px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);}
-            input[type="file"] {margin: 20px;}
-            button {background: #0066cc; color: white; padding: 12px 30px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;}
-            button:hover {background: #004999;}
-            #result {margin-top: 20px; text-align: left; background: #f5f5f5; padding: 15px; border-radius: 8px;}
-        </style>
-    </head>
-    <body>
-        <h1>LedgerMind AI Bookkeeper</h1>
-        <p>Automatically find tax deductions, catch fraud, and clean your books</p>
-        
-        <div class="card">
-            <h3>📊 Upload Your CSV File</h3>
-            <form id="uploadForm" enctype="multipart/form-data">
-                <input type="file" name="file" accept=".csv" required>
-                <br>
-                <button type="submit">Scan Books Now</button>
-            </form>
-            <div id="result"></div>
-        </div>
-
-        <script>
-            document.getElementById('uploadForm').onsubmit = async (e) => {
-                e.preventDefault();
-                const formData = new FormData(e.target);
-                const resultDiv = document.getElementById('result');
-                resultDiv.innerHTML = "Scanning... ⏳";
-                
-                const res = await fetch('/scan', {method: 'POST', body: formData});
-                const data = await res.json();
-                resultDiv.innerHTML = "<pre>" + JSON.stringify(data, null, 2) + "</pre>";
-            }
-        </script>
-    </body>
-    </html>
-    """
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/scan")
-async def scan_books(file: UploadFile):
+async def scan_file(file: UploadFile = File(...)):
     contents = await file.read()
     df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
     
-    duplicates = df.duplicated().sum()
-    total_rows = len(df)
+    # Clean column names
+    df.columns = df.columns.str.strip()
     
-    deductions = 0
-    fraud = 0
-    if 'amount' in df.columns:
-        deductions = df[df['amount'] < 0].shape[0] # negative = expense
-        fraud = df[df['amount'] > 500].shape[0] # big amounts = suspicious
+    # Check if this is inventory format
+    if 'PRODUCT CODE' in df.columns:
+        total_items = len(df)
+        total_boxes = pd.to_numeric(df.get('BOX', 0), errors='coerce').sum()
+        result = {
+            "status": "success",
+            "file_type": "Inventory Report",
+            "total_products": int(total_items),
+            "total_boxes": int(total_boxes),
+            "message": f"Scanned {total_items} products with {total_boxes} total boxes"
+        }
+    else:
+        result = {"status": "success", "rows": len(df), "columns": list(df.columns)}
     
-    return {
-        "status": "Scan Complete ✅",
-        "total_transactions": total_rows,
-        "duplicates_found": int(duplicates),
-        "potential_deductions": int(deductions),
-        "suspicious_transactions": int(fraud),
-        "message": "Your books are clean!" if duplicates == 0 else f"Found {duplicates} duplicate entries"
-    }
-
+    return result
